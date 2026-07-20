@@ -37,7 +37,16 @@ Codex Account Switcher 将不同 Codex 账号的本地登录档安全保存在 M
 
 ## 快速开始
 
-目前可直接从源码构建本地版本：
+### macOS 用户直接安装
+
+前往 [Releases](https://github.com/pengshengege/CodexAccountSwitcher/releases/latest) 下载
+`Codex Account Switcher v0.2.3 Universal.dmg`。打开 DMG 后，将应用拖入“应用程序”文件夹即可使用。
+
+- 支持 macOS 13 Ventura 或更高版本
+- Universal 构建，同时支持 Apple 芯片和 Intel Mac
+- 已使用 Developer ID 签名并通过 Apple 公证与 Gatekeeper 验证
+
+### 从源码构建
 
 ```bash
 git clone https://github.com/pengshengege/CodexAccountSwitcher.git
