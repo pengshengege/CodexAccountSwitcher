@@ -29,6 +29,16 @@ Codex Account Switcher 将不同 Codex 账号的本地登录档安全保存在 M
 | 定时检测 | 每 5 / 15 / 30 / 60 分钟自动刷新账号状态与额度 |
 | Codex 联动 | 可在切换账号后自动重启 Codex macOS 应用 |
 
+## 应用截图
+
+### 账号管理与额度监控
+
+![Codex Account Switcher 账号管理与额度监控](docs/screenshots/account-management.png)
+
+### 系统设置与额度提醒
+
+![Codex Account Switcher 系统设置与额度提醒](docs/screenshots/settings-and-notifications.png)
+
 ## 系统要求
 
 - macOS 13 Ventura 或更高版本
