@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.build-app/
+.build-distribution/
+.swiftpm/
+Package.resolved
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Build and release artifacts
+dist/
+*.app
+*.dmg
+*.zip
+
+# Editors
+.idea/
+.vscode/
+
+# Local secrets and signing material
+.env
+.env.*
+auth.json
+accounts.json
+*.cer
+*.key
+*.p12
+*.pem
+*.mobileprovision
