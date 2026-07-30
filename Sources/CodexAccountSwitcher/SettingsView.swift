@@ -29,7 +29,7 @@ struct SettingsView: View {
                     }
 
                     SettingsCard(title: "Session 迁移", icon: "arrow.left.arrow.right.square.fill") {
-                        Text("换电脑时，先在账号卡片点击导出按钮保存原始 auth.json；再在新电脑导入，即可直接加入并切换账号。")
+                        Text("换电脑时，先在账号卡片点击导出按钮保存原始 auth.json；再在新电脑导入账号列表，需要使用时自行切换。")
                             .font(.subheadline)
 
                         HStack {
@@ -59,7 +59,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(Color.orange)
 
-                        Text("只要 Session 仍有效，新电脑通常不需要重新登录；若令牌已过期、被撤销或旧电脑主动退出登录，仍需重新授权。")
+                        Text("导入只新增或更新账号记录，不会改变当前 Codex 登录，也不会触发重启。只要 Session 仍有效，切换后通常不需要重新登录。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -162,7 +162,7 @@ struct SettingsView: View {
                         HStack {
                             Text("Codex Account Switcher")
                             Spacer()
-                            Text("v0.3.0")
+                            Text("v0.3.1")
                                 .foregroundStyle(.secondary)
                         }
                         Text("这是一个本地账号档案工具，不隶属于 OpenAI。额度数据以 Codex 客户端实际返回为准。")

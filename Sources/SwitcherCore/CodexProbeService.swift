@@ -187,7 +187,7 @@ public final class CodexProbeService {
 
     private static func protocolRequests() -> Data {
         let lines = [
-            "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codex-account-switcher\",\"title\":\"Codex Account Switcher\",\"version\":\"0.3.0\"},\"capabilities\":{\"experimentalApi\":true,\"requestAttestation\":false}}}",
+            "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"codex-account-switcher\",\"title\":\"Codex Account Switcher\",\"version\":\"0.3.1\"},\"capabilities\":{\"experimentalApi\":true,\"requestAttestation\":false}}}",
             "{\"method\":\"initialized\"}",
             "{\"method\":\"account/read\",\"id\":1,\"params\":{\"refreshToken\":false}}",
             "{\"method\":\"account/rateLimits/read\",\"id\":2}"

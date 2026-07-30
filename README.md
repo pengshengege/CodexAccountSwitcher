@@ -6,7 +6,7 @@
 
 ![macOS 13+](https://img.shields.io/badge/macOS-13%2B-111111?logo=apple)
 ![Swift 5.9](https://img.shields.io/badge/Swift-5.9-F05138?logo=swift&logoColor=white)
-![Version 0.3.0](https://img.shields.io/badge/version-0.3.0-2ea44f)
+![Version 0.3.1](https://img.shields.io/badge/version-0.3.1-2ea44f)
 ![MIT License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
@@ -22,7 +22,7 @@ Codex Account Switcher 将不同 Codex 账号的本地登录档安全保存在 M
 | --- | --- |
 | 隔离登录 | 使用独立 `CODEX_HOME` 完成标准浏览器 OAuth，不覆盖当前 Codex 登录 |
 | 一键切换 | 切换前自动归档当前账号，再原子替换 `~/.codex/auth.json` |
-| Session 换机 | 将单个账号的原始 `auth.json` 导出后，在另一台 Mac 导入并直接切换 |
+| Session 换机 | 将单个账号的原始 `auth.json` 导出后，在另一台 Mac 导入账号列表，需要时再自行切换 |
 | 本地私密存储 | 登录档目录权限为 `0700`、文件权限为 `0600`，并排除系统备份 |
 | 额度监控 | 显示 5 小时 / 7 天等滚动窗口的剩余比例与重置倒计时 |
 | 菜单栏操作 | 查看最低剩余额度、切换账号、导入账号及批量刷新 |
@@ -51,7 +51,7 @@ Codex Account Switcher 将不同 Codex 账号的本地登录档安全保存在 M
 ### macOS 用户直接安装
 
 前往 [Releases](https://github.com/pengshengege/CodexAccountSwitcher/releases/latest) 下载
-`Codex Account Switcher v0.3.0 Universal.dmg`。打开 DMG 后，将应用拖入“应用程序”文件夹即可使用。
+`Codex Account Switcher v0.3.1 Universal.dmg`。打开 DMG 后，将应用拖入“应用程序”文件夹即可使用。
 
 - 支持 macOS 13 Ventura 或更高版本
 - Universal 构建，同时支持 Apple 芯片和 Intel Mac
@@ -86,8 +86,8 @@ open "dist/Codex Account Switcher.app"
 1. 在旧 Mac 的账号卡片点击导出按钮；也可以通过“账号 → 导出当前账号 Session…”或“系统设置 → Session 迁移”导出当前账号。
 2. 确认风险提示并保存生成的 `*-auth.json` 文件。应用会将文件权限设为仅当前用户可读写（`0600`）。
 3. 在新 Mac 安装并打开 Codex Account Switcher，点击顶部“导入 Session”按钮。
-4. 选择导出的 `auth.json`。应用会将账号加入本地档案、立即切换，并按设置自动重启 Codex 或提示你手动重启。
-5. 确认新 Mac 可以正常使用后，立即删除迁移文件并清空废纸篓。多个账号请逐个导出、逐个导入。
+4. 选择导出的 `auth.json`。应用只会将账号加入或更新到本地账号列表，不会改变当前 Codex 登录，也不会重启 Codex。
+5. 需要使用该账号时，再由你点击账号卡片中的“切换到这个账号”。确认迁移完成后，立即删除迁移文件并清空废纸篓。多个账号请逐个导出、逐个导入。
 
 > [!WARNING]
 > Session 导出文件**不加密**，其中的访问令牌可用于直接登录，安全性等同于账号密码。不要通过不可信渠道传输，不要发送给他人，也不要上传到公开仓库或公开网盘。
@@ -108,7 +108,7 @@ open "dist/Codex Account Switcher.app"
 - 独立登录成功、失败或取消后，临时目录都会被清理。
 - 切换目标固定为 `~/.codex/auth.json`，写入过程使用原子替换并恢复 `0600` 权限。
 - Session 导出是用户主动触发的明文迁移操作；每次只导出一个账号的原始 `auth.json`，文件默认权限为 `0600`。
-- 导入前会校验文件是否为有效的 Codex 登录档；成功后凭据会进入目标 Mac 的 `AuthVault`，并按正常切换流程写入 `~/.codex/auth.json`。
+- 导入前会校验文件是否为有效的 Codex 登录档；成功后凭据会进入目标 Mac 的 `AuthVault`，并在账号列表中新增或更新记录。导入不会写入 `~/.codex/auth.json`、不会改变当前登录，也不会重启 Codex。
 - 导出文件位于 `AuthVault` 之外，不受应用自动管理；完成迁移后应由用户手动删除。
 - 后台检测从 `AuthVault` 读取凭据，不访问旧版钥匙串，因此不会反复弹出钥匙串授权窗口。
 - v0.2.2 及更早版本保存到钥匙串的账号，只会在第一次主动切换时读取并迁移一次。
@@ -125,11 +125,11 @@ flowchart LR
     D --> E["本机 Codex app-server"]
     E --> F["账号状态与滚动额度"]
     B -->|"导出单账号"| G["明文 auth.json<br/>文件权限 0600"]
-    G -->|"另一台 Mac 导入"| H["目标 Mac AuthVault"]
-    H -->|"立即切换"| I["目标 Mac ~/.codex/auth.json"]
+    G -->|"另一台 Mac 导入"| H["目标 Mac AuthVault<br/>新增或更新账号记录"]
+    H -->|"用户主动点击切换"| I["目标 Mac ~/.codex/auth.json"]
 ```
 
-账号切换本质上是把所选账号的完整登录档原子写入 `~/.codex/auth.json`。Session 迁移复用同一机制：旧 Mac 导出选定账号的原始登录档，新 Mac 校验后收入本地 `AuthVault`，再将其设为当前登录档。
+账号切换本质上是把所选账号的完整登录档原子写入 `~/.codex/auth.json`。Session 导入只负责校验旧 Mac 导出的登录档，并将其收入新 Mac 的本地 `AuthVault`、新增或更新账号记录；它不会改变当前 Codex 登录或触发重启。需要使用该账号时，由用户主动点击切换。
 
 额度检测会启动隔离的临时 Codex 后端，使用选定账号向 OpenAI 读取状态。检测完成后临时目录会被删除，当前使用中的登录档不会被修改。
 

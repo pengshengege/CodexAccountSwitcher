@@ -158,8 +158,8 @@ final class AccountManager: ObservableObject {
 
         let panel = NSOpenPanel()
         panel.title = "导入 Codex Session"
-        panel.message = "选择此前导出的 auth.json。导入后会立即切换到该账号。"
-        panel.prompt = "导入并切换"
+        panel.message = "选择此前导出的 auth.json。只添加到账号列表，不改变当前 Codex 登录。"
+        panel.prompt = "导入 Session"
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
@@ -177,49 +177,23 @@ final class AccountManager: ObservableObject {
             do {
                 let outcome = try await Task.detached(priority: .userInitiated) {
                     let data = try SessionFileTransfer.read(from: sourceURL)
-                    return try library.importAndActivateSession(
+                    return try library.importAuthData(
                         data,
                         into: snapshot
                     )
                 }.value
 
                 accounts = outcome.accounts
-                refreshCurrentIdentity()
-
-                let updateText = outcome.replacedExistingProfile
-                    ? "已有账号档案已更新。"
-                    : "账号已加入列表。"
-                let backupText = outcome.createdSafetyBackup
-                    ? " 原来未归档的当前账号也已自动备份。"
-                    : ""
-
-                if autoRestart {
-                    do {
-                        try await appController.restartCodex()
-                        pendingRestart = false
-                        isImporting = false
-                        notice = AppNotice(
-                            title: "Session 导入成功",
-                            message: "\(outcome.importedProfile.displayName) 已导入并切换，Codex 已重新启动。\(updateText)\(backupText)"
-                        )
-                    } catch {
-                        pendingRestart = appController.isRunning
-                        isImporting = false
-                        notice = AppNotice(
-                            title: "Session 已导入",
-                            message: "登录档已经写入，但 Codex 未能自动重启：\(error.localizedDescription)"
-                        )
-                    }
-                } else {
-                    pendingRestart = appController.isRunning
-                    isImporting = false
-                    notice = AppNotice(
-                        title: "Session 导入成功",
-                        message: appController.isRunning
-                            ? "\(outcome.importedProfile.displayName) 已导入并切换；重启 Codex 后生效。\(updateText)\(backupText)"
-                            : "\(outcome.importedProfile.displayName) 已导入并切换，下次打开 Codex 即可直接使用。\(updateText)\(backupText)"
-                    )
-                }
+                isImporting = false
+                let resultText = outcome.replacedExistingProfile
+                    ? "\(outcome.importedProfile.displayName) 的 Session 已更新。"
+                    : "\(outcome.importedProfile.displayName) 已加入账号列表。"
+                notice = AppNotice(
+                    title: outcome.replacedExistingProfile
+                        ? "Session 已更新"
+                        : "Session 导入成功",
+                    message: "\(resultText)当前 Codex 登录没有改变。需要使用时，请点击“切换到这个账号”。"
+                )
             } catch {
                 isImporting = false
                 showError(error)

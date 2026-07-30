@@ -371,7 +371,7 @@ final class SwitcherCoreTests: XCTestCase {
         XCTAssertEqual(try vault.retrieve(for: profile.id), savedAuthData)
     }
 
-    func testImportAndActivateSessionDeduplicatesAccountAndWritesCurrentAuth() throws {
+    func testImportAuthDataDeduplicatesAccountWithoutChangingCurrentAuth() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("SwitcherImportSessionTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -407,13 +407,17 @@ final class SwitcherCoreTests: XCTestCase {
         try vault.store(oldAuthData, for: existingProfile.id)
         try authFile.writeCurrent(oldAuthData)
 
-        let outcome = try library.importAndActivateSession(
+        XCTAssertEqual(
+            library.activeProfileID(in: [existingProfile]),
+            existingProfile.id
+        )
+
+        let outcome = try library.importAuthData(
             importedAuthData,
             into: [existingProfile]
         )
 
         XCTAssertTrue(outcome.replacedExistingProfile)
-        XCTAssertFalse(outcome.createdSafetyBackup)
         XCTAssertEqual(outcome.accounts.count, 1)
         XCTAssertEqual(outcome.importedProfile.id, existingProfile.id)
         XCTAssertEqual(outcome.importedProfile.displayName, "保留的账号名称")
@@ -421,7 +425,7 @@ final class SwitcherCoreTests: XCTestCase {
             outcome.importedProfile.fingerprint,
             CodexAuthInspector.fingerprint(importedAuthData)
         )
-        XCTAssertEqual(try authFile.readCurrent(), importedAuthData)
+        XCTAssertEqual(try authFile.readCurrent(), oldAuthData)
         XCTAssertEqual(try vault.retrieve(for: existingProfile.id), importedAuthData)
         let persistedAccounts = try store.load()
         XCTAssertEqual(persistedAccounts.count, 1)
@@ -436,7 +440,7 @@ final class SwitcherCoreTests: XCTestCase {
         )
     }
 
-    func testImportAndActivateSessionDoesNotMergeSameEmailWithDifferentAccountID() throws {
+    func testImportAuthDataDoesNotMergeSameEmailWithDifferentAccountIDOrChangeCurrentAuth() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("SwitcherImportIdentityTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -471,8 +475,9 @@ final class SwitcherCoreTests: XCTestCase {
         )
         try store.save([existingProfile])
         try vault.store(existingAuthData, for: existingProfile.id)
+        try authFile.writeCurrent(existingAuthData)
 
-        let outcome = try library.importAndActivateSession(
+        let outcome = try library.importAuthData(
             importedAuthData,
             into: [existingProfile]
         )
@@ -494,11 +499,15 @@ final class SwitcherCoreTests: XCTestCase {
             try vault.retrieve(for: outcome.importedProfile.id),
             importedAuthData
         )
-        XCTAssertEqual(try authFile.readCurrent(), importedAuthData)
+        XCTAssertEqual(try authFile.readCurrent(), existingAuthData)
+        XCTAssertEqual(
+            library.activeProfileID(in: outcome.accounts),
+            existingProfile.id
+        )
         XCTAssertEqual(try store.load().count, 2)
     }
 
-    func testImportAndActivateSessionRollsBackStoreAndVaultWhenActivationFails() throws {
+    func testImportAuthDataRollsBackVaultWhenStoreSaveFails() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("SwitcherImportRollbackTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -520,16 +529,20 @@ final class SwitcherCoreTests: XCTestCase {
         )
         existingProfile.displayName = "回滚前账号"
 
-        let store = ProfileStore(baseDirectory: directory)
-        let vault = FileAuthVault(baseDirectory: directory)
-        try store.save([existingProfile])
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        let blockedStoreDirectory = directory.appendingPathComponent("blocked-store")
+        try Data("ordinary file".utf8).write(to: blockedStoreDirectory)
+        let store = ProfileStore(baseDirectory: blockedStoreDirectory)
+        let vault = FileAuthVault(
+            baseDirectory: directory.appendingPathComponent("vault")
+        )
         try vault.store(oldAuthData, for: existingProfile.id)
-        let originalAccounts = try store.load()
 
-        let blockedParentURL = directory.appendingPathComponent("blocked-parent")
-        try Data("ordinary file".utf8).write(to: blockedParentURL)
         let authFile = CodexAuthFileManager(
-            authURL: blockedParentURL.appendingPathComponent("auth.json")
+            authURL: directory.appendingPathComponent("current/auth.json")
         )
         let library = AccountLibrary(
             store: store,
@@ -537,26 +550,17 @@ final class SwitcherCoreTests: XCTestCase {
             legacyKeychain: LegacyAuthSpy(data: Data()),
             authFile: authFile
         )
+        try authFile.writeCurrent(oldAuthData)
 
         XCTAssertThrowsError(
-            try library.importAndActivateSession(
+            try library.importAuthData(
                 importedAuthData,
-                into: originalAccounts
+                into: [existingProfile]
             )
         )
 
         XCTAssertEqual(try vault.retrieve(for: existingProfile.id), oldAuthData)
-        let restoredAccounts = try store.load()
-        XCTAssertEqual(restoredAccounts.count, 1)
-        XCTAssertEqual(restoredAccounts.first?.id, existingProfile.id)
-        XCTAssertEqual(restoredAccounts.first?.displayName, "回滚前账号")
-        XCTAssertEqual(
-            restoredAccounts.first?.fingerprint,
-            CodexAuthInspector.fingerprint(oldAuthData)
-        )
-        XCTAssertFalse(
-            FileManager.default.fileExists(atPath: authFile.authURL.path)
-        )
+        XCTAssertEqual(try authFile.readCurrent(), oldAuthData)
     }
 
     func testLiveCodexProbeWhenExplicitlyEnabled() throws {

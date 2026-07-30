@@ -313,7 +313,7 @@ private struct EmptyAccountsView: View {
                 .foregroundStyle(Color.accentColor)
             Text("还没有账号档案")
                 .font(.title2.bold())
-            Text("已有导出的 auth.json，可直接导入并切换。\n否则可归档当前登录，或通过独立登录添加账号。")
+            Text("已有导出的 auth.json，可直接导入账号列表。\n需要使用时再点击账号卡片切换，不会影响当前登录。")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
             HStack(spacing: 10) {
