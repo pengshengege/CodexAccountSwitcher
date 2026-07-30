@@ -78,6 +78,7 @@ struct AccountCard: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .disabled(manager.isAccountOperationInProgress)
                 .help("重命名")
             }
 
@@ -109,7 +110,10 @@ struct AccountCard: View {
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled((isActive && !needsReauthorization) || isChecking)
+                .disabled(
+                    (isActive && !needsReauthorization)
+                        || manager.isAccountOperationInProgress
+                )
 
                 Button {
                     manager.check(profile.id)
@@ -122,8 +126,23 @@ struct AccountCard: View {
                     }
                 }
                 .buttonStyle(.bordered)
-                .disabled(isChecking)
+                .disabled(manager.isAccountOperationInProgress)
                 .help("检测账号和额度")
+
+                Button {
+                    manager.exportSession(profile.id)
+                } label: {
+                    if manager.exportingProfileID == profile.id {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(manager.isAccountOperationInProgress)
+                .accessibilityLabel("导出 Session")
+                .help("导出这个账号的 Session")
 
                 Button(role: .destructive) {
                     confirmation = .delete
@@ -131,6 +150,7 @@ struct AccountCard: View {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.bordered)
+                .disabled(manager.isAccountOperationInProgress)
                 .help("删除档案")
             }
         }

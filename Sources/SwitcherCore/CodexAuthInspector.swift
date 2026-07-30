@@ -13,8 +13,19 @@ public enum CodexAuthInspector {
         let tokens = root["tokens"] as? [String: Any]
         let apiKey = root["OPENAI_API_KEY"] as? String
 
-        guard tokens != nil || (apiKey?.isEmpty == false) else {
-            throw SwitcherError.invalidAuthFile("缺少 tokens 或 API Key")
+        let hasUsableToken = ["id_token", "access_token", "refresh_token"]
+            .contains { key in
+                guard let value = tokens?[key] as? String else { return false }
+                return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+        let hasAPIKey = apiKey?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty == false
+
+        guard hasUsableToken || hasAPIKey else {
+            throw SwitcherError.invalidAuthFile(
+                "缺少可用的登录令牌或 API Key"
+            )
         }
 
         var payloads: [[String: Any]] = []

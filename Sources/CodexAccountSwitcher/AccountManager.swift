@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwitcherCore
+import UniformTypeIdentifiers
 
 struct AppNotice: Identifiable {
     let id = UUID()
@@ -36,6 +37,7 @@ final class AccountManager: ObservableObject {
     @Published private(set) var currentIdentity: CodexIdentity?
     @Published private(set) var checkingIDs: Set<UUID> = []
     @Published private(set) var isImporting = false
+    @Published private(set) var exportingProfileID: UUID?
     @Published private(set) var isRefreshingAll = false
     @Published private(set) var switchingProfileID: UUID?
     @Published private(set) var quotaNotificationsEnabled: Bool
@@ -125,7 +127,7 @@ final class AccountManager: ObservableObject {
     }
 
     func importCurrent() {
-        guard !isImporting else { return }
+        guard !isAccountOperationInProgress else { return }
         isImporting = true
         let snapshot = accounts
         let library = library
@@ -150,8 +152,142 @@ final class AccountManager: ObservableObject {
         }
     }
 
+    func importSessionFile() {
+        guard !isAccountOperationInProgress else { return }
+        isImporting = true
+
+        let panel = NSOpenPanel()
+        panel.title = "导入 Codex Session"
+        panel.message = "选择此前导出的 auth.json。导入后会立即切换到该账号。"
+        panel.prompt = "导入并切换"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+
+        guard panel.runModal() == .OK, let sourceURL = panel.url else {
+            isImporting = false
+            return
+        }
+
+        let snapshot = accounts
+        let library = library
+
+        Task {
+            do {
+                let outcome = try await Task.detached(priority: .userInitiated) {
+                    let data = try SessionFileTransfer.read(from: sourceURL)
+                    return try library.importAndActivateSession(
+                        data,
+                        into: snapshot
+                    )
+                }.value
+
+                accounts = outcome.accounts
+                refreshCurrentIdentity()
+
+                let updateText = outcome.replacedExistingProfile
+                    ? "已有账号档案已更新。"
+                    : "账号已加入列表。"
+                let backupText = outcome.createdSafetyBackup
+                    ? " 原来未归档的当前账号也已自动备份。"
+                    : ""
+
+                if autoRestart {
+                    do {
+                        try await appController.restartCodex()
+                        pendingRestart = false
+                        isImporting = false
+                        notice = AppNotice(
+                            title: "Session 导入成功",
+                            message: "\(outcome.importedProfile.displayName) 已导入并切换，Codex 已重新启动。\(updateText)\(backupText)"
+                        )
+                    } catch {
+                        pendingRestart = appController.isRunning
+                        isImporting = false
+                        notice = AppNotice(
+                            title: "Session 已导入",
+                            message: "登录档已经写入，但 Codex 未能自动重启：\(error.localizedDescription)"
+                        )
+                    }
+                } else {
+                    pendingRestart = appController.isRunning
+                    isImporting = false
+                    notice = AppNotice(
+                        title: "Session 导入成功",
+                        message: appController.isRunning
+                            ? "\(outcome.importedProfile.displayName) 已导入并切换；重启 Codex 后生效。\(updateText)\(backupText)"
+                            : "\(outcome.importedProfile.displayName) 已导入并切换，下次打开 Codex 即可直接使用。\(updateText)\(backupText)"
+                    )
+                }
+            } catch {
+                isImporting = false
+                showError(error)
+            }
+        }
+    }
+
+    func exportSession(_ profileID: UUID) {
+        guard !isAccountOperationInProgress else { return }
+        guard let profile = accounts.first(where: { $0.id == profileID }) else {
+            showError(SwitcherError.profileNotFound)
+            return
+        }
+        exportingProfileID = profileID
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "导出 \(profile.displayName) 的 Session？"
+        alert.informativeText = """
+        导出的 auth.json 包含可直接登录该账号的令牌，等同于密码。请勿发送给他人或上传到公开仓库；迁移完成后建议删除导出文件。
+        """
+        alert.addButton(withTitle: "继续导出")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            exportingProfileID = nil
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.title = "导出 Codex Session"
+        panel.message = "文件未加密，应用会将权限设为仅当前用户可读写（0600）。"
+        panel.prompt = "导出"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.nameFieldStringValue = sessionFilename(for: profile)
+
+        guard panel.runModal() == .OK, let destinationURL = panel.url else {
+            exportingProfileID = nil
+            return
+        }
+
+        let snapshot = accounts
+        let library = library
+
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) {
+                    let data = try library.exportSession(
+                        profileID: profileID,
+                        accounts: snapshot
+                    )
+                    try SessionFileTransfer.write(data, to: destinationURL)
+                }.value
+                exportingProfileID = nil
+                notice = AppNotice(
+                    title: "Session 导出成功",
+                    message: "已导出到 \(destinationURL.path)。这个文件等同于账号密码，请妥善保管。"
+                )
+            } catch {
+                exportingProfileID = nil
+                showError(error)
+            }
+        }
+    }
+
     func beginIsolatedLogin() {
-        guard isolatedLoginState?.isWorking != true else { return }
+        guard !isAccountOperationInProgress else { return }
         isolatedLoginState = IsolatedLoginState()
 
         do {
@@ -193,7 +329,9 @@ final class AccountManager: ObservableObject {
     }
 
     func switchTo(_ profileID: UUID) {
-        guard switchingProfileID == nil, activeProfileID != profileID else { return }
+        guard !isAccountOperationInProgress, activeProfileID != profileID else {
+            return
+        }
         switchingProfileID = profileID
         let snapshot = accounts
         let library = library
@@ -236,7 +374,7 @@ final class AccountManager: ObservableObject {
     }
 
     func check(_ profileID: UUID) {
-        guard !checkingIDs.contains(profileID) else { return }
+        guard !isAccountOperationInProgress else { return }
         checkingIDs.insert(profileID)
         let snapshot = accounts
         let library = library
@@ -266,7 +404,7 @@ final class AccountManager: ObservableObject {
     }
 
     func refreshAll(isAutomatic: Bool = false) {
-        guard !isRefreshingAll else { return }
+        guard !isAccountOperationInProgress else { return }
         isRefreshingAll = true
 
         Task {
@@ -306,6 +444,7 @@ final class AccountManager: ObservableObject {
     }
 
     func rename(_ profileID: UUID, to name: String) {
+        guard !isAccountOperationInProgress else { return }
         do {
             accounts = try library.rename(
                 profileID: profileID,
@@ -319,6 +458,7 @@ final class AccountManager: ObservableObject {
     }
 
     func delete(_ profileID: UUID) {
+        guard !isAccountOperationInProgress else { return }
         do {
             accounts = try library.delete(profileID: profileID, accounts: accounts)
             if activeProfileID == profileID {
@@ -463,6 +603,15 @@ final class AccountManager: ObservableObject {
 
     var activeProfileNeedsReauthorization: Bool {
         activeProfile.map(profileNeedsReauthorization) ?? false
+    }
+
+    var isAccountOperationInProgress: Bool {
+        isImporting
+            || exportingProfileID != nil
+            || isRefreshingAll
+            || switchingProfileID != nil
+            || !checkingIDs.isEmpty
+            || isolatedLoginState?.isWorking == true
     }
 
     private func refreshCurrentIdentity() {
@@ -635,6 +784,19 @@ final class AccountManager: ObservableObject {
 
     private func requiresStoredAuthMigration(_ error: Error) -> Bool {
         (error as? SwitcherError)?.requiresStoredAuthMigration == true
+    }
+
+    private func sessionFilename(for profile: AccountProfile) -> String {
+        let invalidCharacters = CharacterSet(
+            charactersIn: "/:\\?%*|\"<>"
+        ).union(.controlCharacters)
+        let cleaned = profile.displayName
+            .components(separatedBy: invalidCharacters)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let accountName = cleaned.isEmpty ? "Codex" : cleaned
+        return "\(accountName)-auth.json"
     }
 
     private func showError(_ error: Error) {

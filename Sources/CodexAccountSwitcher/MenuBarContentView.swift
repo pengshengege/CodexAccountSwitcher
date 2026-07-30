@@ -79,10 +79,18 @@ struct MenuBarContentView: View {
                         .foregroundStyle(Color.accentColor)
                     Text("还没有账号档案")
                         .font(.headline)
-                    Button("导入当前账号") {
-                        manager.importCurrent()
+                    Button("导入 Session 文件") {
+                        openWindow(id: "main")
+                        NSApp.activate(ignoringOtherApps: true)
+                        manager.importSessionFile()
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(manager.isAccountOperationInProgress)
+                    Button("导入当前已登录账号") {
+                        manager.importCurrent()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(manager.isAccountOperationInProgress)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(28)
@@ -118,7 +126,7 @@ struct MenuBarContentView: View {
                     } label: {
                         Label("刷新全部", systemImage: "arrow.clockwise")
                     }
-                    .disabled(manager.isRefreshingAll)
+                    .disabled(manager.isAccountOperationInProgress)
 
                     Button {
                         openWindow(id: "main")
@@ -127,7 +135,7 @@ struct MenuBarContentView: View {
                     } label: {
                         Label("添加账号", systemImage: "person.badge.plus")
                     }
-                    .disabled(manager.isolatedLoginState?.isWorking == true)
+                    .disabled(manager.isAccountOperationInProgress)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -264,8 +272,7 @@ private struct MenuBarAccountRow: View {
             .buttonStyle(.plain)
             .disabled(
                 (isActive && !needsReauthorization)
-                    || isSwitching
-                    || manager.switchingProfileID != nil
+                    || manager.isAccountOperationInProgress
             )
 
             Button {
@@ -279,7 +286,7 @@ private struct MenuBarAccountRow: View {
                 }
             }
             .buttonStyle(.plain)
-            .disabled(isChecking)
+            .disabled(manager.isAccountOperationInProgress)
             .help("刷新这个账号")
         }
         .padding(.horizontal, 10)

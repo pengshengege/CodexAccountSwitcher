@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import XCTest
 @testable import SwitcherCore
@@ -37,6 +38,19 @@ final class SwitcherCoreTests: XCTestCase {
             CodexAuthInspector.suggestedDisplayName(for: identity),
             "demo"
         )
+    }
+
+    func testAuthInspectorRejectsEmptyTokensObject() throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "auth_mode": "chatgpt",
+            "tokens": [:]
+        ])
+
+        XCTAssertThrowsError(try CodexAuthInspector.inspect(data)) { error in
+            guard case .invalidAuthFile = error as? SwitcherError else {
+                return XCTFail("Expected invalidAuthFile, got \(error)")
+            }
+        }
     }
 
     func testProfileStoreRoundTrip() throws {
@@ -83,6 +97,77 @@ final class SwitcherCoreTests: XCTestCase {
         let attributes = try FileManager.default.attributesOfItem(atPath: authURL.path)
         let permissions = (attributes[.posixPermissions] as? NSNumber)?.intValue
         XCTAssertEqual(permissions, 0o600)
+    }
+
+    func testSessionFileTransferRoundTripsUnmodifiedAuthWithPrivatePermissions() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherSessionTransferTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+
+        let sessionURL = directory.appendingPathComponent("codex-session.json")
+        let authData = try makeChatGPTAuthData(
+            accountID: "account-transfer",
+            email: "transfer@example.com",
+            refreshToken: "refresh-transfer",
+            sessionMarker: "transfer"
+        )
+
+        try SessionFileTransfer.write(authData, to: sessionURL)
+
+        XCTAssertEqual(try SessionFileTransfer.read(from: sessionURL), authData)
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: sessionURL.path
+        )
+        let permissions = (
+            attributes[.posixPermissions] as? NSNumber
+        )?.intValue
+        XCTAssertEqual(permissions, 0o600)
+    }
+
+    func testSessionFileTransferRejectsInvalidAuthWithoutCreatingExport() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherInvalidSessionTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+
+        let sessionURL = directory.appendingPathComponent("invalid-session.json")
+
+        XCTAssertThrowsError(
+            try SessionFileTransfer.write(Data("not an auth file".utf8), to: sessionURL)
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sessionURL.path))
+    }
+
+    func testSessionFileTransferUsesPrivatePermissionsWithPermissiveUmask() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherSessionUmaskTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+
+        let sessionURL = directory.appendingPathComponent("codex-session.json")
+        let authData = try makeAPIKeyAuthData(apiKey: "umask-session-key")
+        let previousUmask = Darwin.umask(0o000)
+        defer { _ = Darwin.umask(previousUmask) }
+
+        try SessionFileTransfer.write(authData, to: sessionURL)
+
+        let attributes = try FileManager.default.attributesOfItem(
+            atPath: sessionURL.path
+        )
+        let permissions = (
+            attributes[.posixPermissions] as? NSNumber
+        )?.intValue
+        XCTAssertEqual(permissions.map { $0 & 0o777 }, 0o600)
     }
 
     func testQuotaResetCountdownUsesDaysHoursAndMinutes() {
@@ -212,6 +297,268 @@ final class SwitcherCoreTests: XCTestCase {
         XCTAssertEqual(legacyVault.retrieveCount, 1)
     }
 
+    func testExportSessionUsesCurrentMatchingAuthAndRefreshesVault() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherExportSessionTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let currentAuthData = try makeAPIKeyAuthData(apiKey: "current-session-key")
+        let identity = try CodexAuthInspector.inspect(currentAuthData)
+        let profile = makeProfile(identity: identity)
+        let store = ProfileStore(baseDirectory: directory)
+        let vault = FileAuthVault(baseDirectory: directory)
+        let authFile = CodexAuthFileManager(
+            authURL: directory.appendingPathComponent("current/auth.json")
+        )
+        let library = AccountLibrary(
+            store: store,
+            vault: vault,
+            legacyKeychain: LegacyAuthSpy(data: Data()),
+            authFile: authFile
+        )
+        try vault.store(Data("stale-vault-session".utf8), for: profile.id)
+        try authFile.writeCurrent(currentAuthData)
+
+        let exported = try library.exportSession(
+            profileID: profile.id,
+            accounts: [profile]
+        )
+
+        XCTAssertEqual(exported, currentAuthData)
+        XCTAssertEqual(try vault.retrieve(for: profile.id), currentAuthData)
+    }
+
+    func testExportSessionDoesNotUseCurrentAuthWithSameEmailAndDifferentAccountID() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherExportIdentityTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let savedAuthData = try makeChatGPTAuthData(
+            accountID: "account-saved",
+            email: "shared@example.com",
+            refreshToken: "refresh-saved",
+            sessionMarker: "saved"
+        )
+        let currentAuthData = try makeChatGPTAuthData(
+            accountID: "account-current",
+            email: "shared@example.com",
+            refreshToken: "refresh-current",
+            sessionMarker: "current"
+        )
+        let profile = makeProfile(
+            identity: try CodexAuthInspector.inspect(savedAuthData)
+        )
+        let vault = FileAuthVault(baseDirectory: directory)
+        let authFile = CodexAuthFileManager(
+            authURL: directory.appendingPathComponent("current/auth.json")
+        )
+        let library = AccountLibrary(
+            store: ProfileStore(baseDirectory: directory),
+            vault: vault,
+            legacyKeychain: LegacyAuthSpy(data: Data()),
+            authFile: authFile
+        )
+        try vault.store(savedAuthData, for: profile.id)
+        try authFile.writeCurrent(currentAuthData)
+
+        let exported = try library.exportSession(
+            profileID: profile.id,
+            accounts: [profile]
+        )
+
+        XCTAssertEqual(exported, savedAuthData)
+        XCTAssertNotEqual(exported, currentAuthData)
+        XCTAssertEqual(try vault.retrieve(for: profile.id), savedAuthData)
+    }
+
+    func testImportAndActivateSessionDeduplicatesAccountAndWritesCurrentAuth() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherImportSessionTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let oldAuthData = try makeChatGPTAuthData(
+            accountID: "account-migrated",
+            email: "migration@example.com",
+            refreshToken: "refresh-old",
+            sessionMarker: "old"
+        )
+        let importedAuthData = try makeChatGPTAuthData(
+            accountID: "account-migrated",
+            email: "migration@example.com",
+            refreshToken: "refresh-new",
+            sessionMarker: "new"
+        )
+        let oldIdentity = try CodexAuthInspector.inspect(oldAuthData)
+        var existingProfile = makeProfile(identity: oldIdentity)
+        existingProfile.displayName = "保留的账号名称"
+
+        let store = ProfileStore(baseDirectory: directory)
+        let vault = FileAuthVault(baseDirectory: directory)
+        let authFile = CodexAuthFileManager(
+            authURL: directory.appendingPathComponent("current/auth.json")
+        )
+        let library = AccountLibrary(
+            store: store,
+            vault: vault,
+            legacyKeychain: LegacyAuthSpy(data: Data()),
+            authFile: authFile
+        )
+        try store.save([existingProfile])
+        try vault.store(oldAuthData, for: existingProfile.id)
+        try authFile.writeCurrent(oldAuthData)
+
+        let outcome = try library.importAndActivateSession(
+            importedAuthData,
+            into: [existingProfile]
+        )
+
+        XCTAssertTrue(outcome.replacedExistingProfile)
+        XCTAssertFalse(outcome.createdSafetyBackup)
+        XCTAssertEqual(outcome.accounts.count, 1)
+        XCTAssertEqual(outcome.importedProfile.id, existingProfile.id)
+        XCTAssertEqual(outcome.importedProfile.displayName, "保留的账号名称")
+        XCTAssertEqual(
+            outcome.importedProfile.fingerprint,
+            CodexAuthInspector.fingerprint(importedAuthData)
+        )
+        XCTAssertEqual(try authFile.readCurrent(), importedAuthData)
+        XCTAssertEqual(try vault.retrieve(for: existingProfile.id), importedAuthData)
+        let persistedAccounts = try store.load()
+        XCTAssertEqual(persistedAccounts.count, 1)
+        XCTAssertEqual(persistedAccounts.first?.id, existingProfile.id)
+        XCTAssertEqual(
+            persistedAccounts.first?.fingerprint,
+            CodexAuthInspector.fingerprint(importedAuthData)
+        )
+        XCTAssertEqual(
+            library.activeProfileID(in: outcome.accounts),
+            existingProfile.id
+        )
+    }
+
+    func testImportAndActivateSessionDoesNotMergeSameEmailWithDifferentAccountID() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherImportIdentityTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let existingAuthData = try makeChatGPTAuthData(
+            accountID: "account-existing",
+            email: "shared@example.com",
+            refreshToken: "refresh-existing",
+            sessionMarker: "existing"
+        )
+        let importedAuthData = try makeChatGPTAuthData(
+            accountID: "account-imported",
+            email: "shared@example.com",
+            refreshToken: "refresh-imported",
+            sessionMarker: "imported"
+        )
+        var existingProfile = makeProfile(
+            identity: try CodexAuthInspector.inspect(existingAuthData)
+        )
+        existingProfile.displayName = "原账号"
+
+        let store = ProfileStore(baseDirectory: directory)
+        let vault = FileAuthVault(baseDirectory: directory)
+        let authFile = CodexAuthFileManager(
+            authURL: directory.appendingPathComponent("current/auth.json")
+        )
+        let library = AccountLibrary(
+            store: store,
+            vault: vault,
+            legacyKeychain: LegacyAuthSpy(data: Data()),
+            authFile: authFile
+        )
+        try store.save([existingProfile])
+        try vault.store(existingAuthData, for: existingProfile.id)
+
+        let outcome = try library.importAndActivateSession(
+            importedAuthData,
+            into: [existingProfile]
+        )
+
+        XCTAssertFalse(outcome.replacedExistingProfile)
+        XCTAssertEqual(outcome.accounts.count, 2)
+        XCTAssertNotEqual(outcome.importedProfile.id, existingProfile.id)
+        XCTAssertEqual(
+            outcome.importedProfile.accountIdentifier,
+            "account-imported"
+        )
+        XCTAssertEqual(
+            outcome.accounts.first(where: { $0.id == existingProfile.id })?
+                .accountIdentifier,
+            "account-existing"
+        )
+        XCTAssertEqual(try vault.retrieve(for: existingProfile.id), existingAuthData)
+        XCTAssertEqual(
+            try vault.retrieve(for: outcome.importedProfile.id),
+            importedAuthData
+        )
+        XCTAssertEqual(try authFile.readCurrent(), importedAuthData)
+        XCTAssertEqual(try store.load().count, 2)
+    }
+
+    func testImportAndActivateSessionRollsBackStoreAndVaultWhenActivationFails() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SwitcherImportRollbackTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let oldAuthData = try makeChatGPTAuthData(
+            accountID: "account-rollback",
+            email: "rollback@example.com",
+            refreshToken: "refresh-old",
+            sessionMarker: "old"
+        )
+        let importedAuthData = try makeChatGPTAuthData(
+            accountID: "account-rollback",
+            email: "rollback@example.com",
+            refreshToken: "refresh-new",
+            sessionMarker: "new"
+        )
+        var existingProfile = makeProfile(
+            identity: try CodexAuthInspector.inspect(oldAuthData)
+        )
+        existingProfile.displayName = "回滚前账号"
+
+        let store = ProfileStore(baseDirectory: directory)
+        let vault = FileAuthVault(baseDirectory: directory)
+        try store.save([existingProfile])
+        try vault.store(oldAuthData, for: existingProfile.id)
+        let originalAccounts = try store.load()
+
+        let blockedParentURL = directory.appendingPathComponent("blocked-parent")
+        try Data("ordinary file".utf8).write(to: blockedParentURL)
+        let authFile = CodexAuthFileManager(
+            authURL: blockedParentURL.appendingPathComponent("auth.json")
+        )
+        let library = AccountLibrary(
+            store: store,
+            vault: vault,
+            legacyKeychain: LegacyAuthSpy(data: Data()),
+            authFile: authFile
+        )
+
+        XCTAssertThrowsError(
+            try library.importAndActivateSession(
+                importedAuthData,
+                into: originalAccounts
+            )
+        )
+
+        XCTAssertEqual(try vault.retrieve(for: existingProfile.id), oldAuthData)
+        let restoredAccounts = try store.load()
+        XCTAssertEqual(restoredAccounts.count, 1)
+        XCTAssertEqual(restoredAccounts.first?.id, existingProfile.id)
+        XCTAssertEqual(restoredAccounts.first?.displayName, "回滚前账号")
+        XCTAssertEqual(
+            restoredAccounts.first?.fingerprint,
+            CodexAuthInspector.fingerprint(oldAuthData)
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: authFile.authURL.path)
+        )
+    }
+
     func testLiveCodexProbeWhenExplicitlyEnabled() throws {
         guard ProcessInfo.processInfo.environment["RUN_CODEX_INTEGRATION_TESTS"] == "1" else {
             throw XCTSkip("Set RUN_CODEX_INTEGRATION_TESTS=1 to run the live Codex probe.")
@@ -231,10 +578,38 @@ final class SwitcherCoreTests: XCTestCase {
         return "\(base64URL(header)).\(base64URL(body))."
     }
 
-    private func makeAPIKeyAuthData() throws -> Data {
+    private func makeAPIKeyAuthData(apiKey: String = "fixture-key") throws -> Data {
         try JSONSerialization.data(withJSONObject: [
             "auth_mode": "api_key",
-            "OPENAI_API_KEY": "fixture-key"
+            "OPENAI_API_KEY": apiKey
+        ])
+    }
+
+    private func makeChatGPTAuthData(
+        accountID: String,
+        email: String,
+        refreshToken: String,
+        sessionMarker: String
+    ) throws -> Data {
+        let token = try makeUnsignedJWT(payload: [
+            "email": email,
+            "sub": "user-\(accountID)",
+            "session_marker": sessionMarker,
+            "exp": 4_102_444_800,
+            "https://api.openai.com/auth": [
+                "chatgpt_plan_type": "plus",
+                "chatgpt_account_id": accountID
+            ]
+        ])
+        return try JSONSerialization.data(withJSONObject: [
+            "auth_mode": "chatgpt",
+            "OPENAI_API_KEY": NSNull(),
+            "tokens": [
+                "id_token": token,
+                "access_token": token,
+                "refresh_token": refreshToken,
+                "account_id": accountID
+            ]
         ])
     }
 

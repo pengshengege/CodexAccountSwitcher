@@ -41,10 +41,10 @@ public final class FileAuthVault {
         do {
             try prepareDirectory()
             let destination = fileURL(for: profileID)
-            try data.write(to: destination, options: .atomic)
-            try fileManager.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: destination.path
+            try SessionFileTransfer.writePrivateData(
+                data,
+                to: destination,
+                fileManager: fileManager
             )
         } catch {
             throw SwitcherError.fileOperation(

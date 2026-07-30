@@ -13,6 +13,18 @@ public struct SwitchOutcome: Sendable {
     public var createdSafetyBackup: Bool
 }
 
+public struct SessionImportOutcome: Sendable {
+    public var accounts: [AccountProfile]
+    public var importedProfile: AccountProfile
+    public var replacedExistingProfile: Bool
+    public var createdSafetyBackup: Bool
+}
+
+private struct VaultSnapshot {
+    var profileID: UUID
+    var data: Data?
+}
+
 public final class AccountLibrary {
     public let store: ProfileStore
     public let vault: FileAuthVault
@@ -81,9 +93,21 @@ public final class AccountLibrary {
             profile.importedAt = Date()
             profile.health = .unchecked
             profile.lastError = nil
+            let previousData = vault.contains(profile.id)
+                ? try vault.retrieve(for: profile.id)
+                : nil
             try vault.store(data, for: profile.id)
             updated[index] = profile
-            try store.save(updated)
+            do {
+                try store.save(updated)
+            } catch {
+                if let previousData {
+                    try? vault.store(previousData, for: profile.id)
+                } else {
+                    try? vault.delete(for: profile.id)
+                }
+                throw error
+            }
             return ImportOutcome(
                 accounts: updated,
                 importedProfile: profile,
@@ -112,6 +136,135 @@ public final class AccountLibrary {
             accounts: updated,
             importedProfile: profile,
             replacedExistingProfile: false
+        )
+    }
+
+    public func exportSession(
+        profileID: UUID,
+        accounts: [AccountProfile]
+    ) throws -> Data {
+        guard let profile = accounts.first(where: { $0.id == profileID }) else {
+            throw SwitcherError.profileNotFound
+        }
+
+        if let currentData = try? authFile.readCurrent(),
+           let currentIdentity = try? CodexAuthInspector.inspect(currentData),
+           identity(currentIdentity, matches: profile) {
+            try vault.store(currentData, for: profileID)
+            return currentData
+        }
+
+        let data = try storedAuthData(
+            for: profileID,
+            allowLegacyMigration: true
+        )
+        _ = try CodexAuthInspector.inspect(data)
+        return data
+    }
+
+    public func importAndActivateSession(
+        _ data: Data,
+        into accounts: [AccountProfile]
+    ) throws -> SessionImportOutcome {
+        let importedIdentity = try CodexAuthInspector.inspect(data)
+        var updated = accounts
+        var createdSafetyBackup = false
+        var vaultWrites: [UUID: Data] = [:]
+
+        if let currentData = try? authFile.readCurrent(),
+           let currentIdentity = try? CodexAuthInspector.inspect(currentData),
+           !identity(currentIdentity, matches: importedIdentity) {
+            if let currentIndex = matchingIndex(for: currentIdentity, in: updated) {
+                var currentProfile = updated[currentIndex]
+                currentProfile.email = currentIdentity.email ?? currentProfile.email
+                currentProfile.planType = currentIdentity.planType
+                    ?? currentProfile.planType
+                currentProfile.accountIdentifier = currentIdentity.accountIdentifier
+                    ?? currentProfile.accountIdentifier
+                currentProfile.authMode = currentIdentity.authMode
+                currentProfile.fingerprint = currentIdentity.fingerprint
+                vaultWrites[currentProfile.id] = currentData
+                updated[currentIndex] = currentProfile
+            } else {
+                let backup = AccountProfile(
+                    displayName: "自动备份 · \(CodexAuthInspector.suggestedDisplayName(for: currentIdentity))",
+                    email: currentIdentity.email,
+                    accountIdentifier: currentIdentity.accountIdentifier,
+                    authMode: currentIdentity.authMode,
+                    planType: currentIdentity.planType,
+                    fingerprint: currentIdentity.fingerprint
+                )
+                vaultWrites[backup.id] = currentData
+                updated.append(backup)
+                createdSafetyBackup = true
+            }
+        }
+
+        let importedProfile: AccountProfile
+        let replacedExistingProfile: Bool
+        if let importedIndex = matchingIndex(for: importedIdentity, in: updated) {
+            var profile = updated[importedIndex]
+            profile.email = importedIdentity.email ?? profile.email
+            profile.accountIdentifier = importedIdentity.accountIdentifier
+                ?? profile.accountIdentifier
+            profile.authMode = importedIdentity.authMode
+            profile.planType = importedIdentity.planType ?? profile.planType
+            profile.fingerprint = importedIdentity.fingerprint
+            profile.importedAt = Date()
+            profile.health = .unchecked
+            profile.lastError = nil
+            updated[importedIndex] = profile
+            importedProfile = profile
+            replacedExistingProfile = true
+        } else {
+            let profile = AccountProfile(
+                displayName: CodexAuthInspector.suggestedDisplayName(
+                    for: importedIdentity
+                ),
+                email: importedIdentity.email,
+                accountIdentifier: importedIdentity.accountIdentifier,
+                authMode: importedIdentity.authMode,
+                planType: importedIdentity.planType,
+                fingerprint: importedIdentity.fingerprint
+            )
+            updated.append(profile)
+            importedProfile = profile
+            replacedExistingProfile = false
+        }
+        vaultWrites[importedProfile.id] = data
+
+        let snapshots = try vaultWrites.keys.map { profileID in
+            VaultSnapshot(
+                profileID: profileID,
+                data: vault.contains(profileID)
+                    ? try vault.retrieve(for: profileID)
+                    : nil
+            )
+        }
+
+        do {
+            for (profileID, authData) in vaultWrites {
+                try vault.store(authData, for: profileID)
+            }
+            try store.save(updated)
+            try authFile.writeCurrent(data)
+        } catch {
+            for snapshot in snapshots {
+                if let originalData = snapshot.data {
+                    try? vault.store(originalData, for: snapshot.profileID)
+                } else {
+                    try? vault.delete(for: snapshot.profileID)
+                }
+            }
+            try? store.save(accounts)
+            throw error
+        }
+
+        return SessionImportOutcome(
+            accounts: updated,
+            importedProfile: importedProfile,
+            replacedExistingProfile: replacedExistingProfile,
+            createdSafetyBackup: createdSafetyBackup
         )
     }
 
@@ -271,7 +424,11 @@ public final class AccountLibrary {
         }
         if let email = identity.email,
            let index = accounts.firstIndex(where: {
-               $0.email?.caseInsensitiveCompare(email) == .orderedSame
+               let emailMatches =
+                   $0.email?.caseInsensitiveCompare(email) == .orderedSame
+               let accountIDsAreCompatible =
+                   identity.accountIdentifier == nil || $0.accountIdentifier == nil
+               return emailMatches && accountIDsAreCompatible
            }) {
             return index
         }
@@ -283,16 +440,33 @@ public final class AccountLibrary {
         matches profile: AccountProfile
     ) -> Bool {
         if let accountID = identity.accountIdentifier,
-           let profileAccountID = profile.accountIdentifier,
-           accountID == profileAccountID {
-            return true
+           let profileAccountID = profile.accountIdentifier {
+            return accountID == profileAccountID
         }
+        if identity.fingerprint == profile.fingerprint { return true }
         if let email = identity.email,
            let profileEmail = profile.email,
            email.caseInsensitiveCompare(profileEmail) == .orderedSame {
             return true
         }
-        return identity.fingerprint == profile.fingerprint
+        return false
+    }
+
+    private func identity(
+        _ left: CodexIdentity,
+        matches right: CodexIdentity
+    ) -> Bool {
+        if let leftAccountID = left.accountIdentifier,
+           let rightAccountID = right.accountIdentifier {
+            return leftAccountID == rightAccountID
+        }
+        if left.fingerprint == right.fingerprint { return true }
+        if let leftEmail = left.email,
+           let rightEmail = right.email,
+           leftEmail.caseInsensitiveCompare(rightEmail) == .orderedSame {
+            return true
+        }
+        return false
     }
 
     private func storedAuthData(

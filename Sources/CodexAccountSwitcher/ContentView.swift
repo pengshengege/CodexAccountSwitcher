@@ -219,18 +219,26 @@ private struct HeaderBar: View {
             .buttonStyle(.bordered)
 
             Button {
+                manager.importSessionFile()
+            } label: {
+                Label("导入 Session", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.bordered)
+            .disabled(manager.isAccountOperationInProgress)
+
+            Button {
                 manager.beginIsolatedLogin()
             } label: {
                 Label("添加新账号", systemImage: "person.badge.plus")
             }
             .buttonStyle(.borderedProminent)
-            .disabled(manager.isolatedLoginState?.isWorking == true)
+            .disabled(manager.isAccountOperationInProgress)
 
             Menu {
                 Button("导入当前已登录账号") {
                     manager.importCurrent()
                 }
-                .disabled(manager.isImporting)
+                .disabled(manager.isAccountOperationInProgress)
                 Text("仅用于归档当前账号，不要先退出 Codex")
             } label: {
                 if manager.isImporting {
@@ -242,7 +250,7 @@ private struct HeaderBar: View {
             }
             .menuStyle(.borderlessButton)
             .frame(width: 34)
-            .help("更多导入方式")
+            .help("导入当前已登录账号")
 
             Button {
                 manager.refreshAll()
@@ -255,7 +263,9 @@ private struct HeaderBar: View {
                 }
             }
             .buttonStyle(.bordered)
-            .disabled(manager.isRefreshingAll || manager.accounts.isEmpty)
+            .disabled(
+                manager.isAccountOperationInProgress || manager.accounts.isEmpty
+            )
             .help("检测全部账号")
         }
         .padding(.horizontal, 22)
@@ -303,18 +313,25 @@ private struct EmptyAccountsView: View {
                 .foregroundStyle(Color.accentColor)
             Text("还没有账号档案")
                 .font(.title2.bold())
-            Text("已在 Codex 登录时，可先导入当前账号。\n添加其他账号请走独立登录，不需要退出当前账号。")
+            Text("已有导出的 auth.json，可直接导入并切换。\n否则可归档当前登录，或通过独立登录添加账号。")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
-            HStack {
+            HStack(spacing: 10) {
+                Button("导入 Session 文件") {
+                    manager.importSessionFile()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(manager.isAccountOperationInProgress)
                 Button("导入当前已登录账号") {
                     manager.importCurrent()
                 }
                 .buttonStyle(.bordered)
+                .disabled(manager.isAccountOperationInProgress)
                 Button("添加其他账号") {
                     manager.beginIsolatedLogin()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
+                .disabled(manager.isAccountOperationInProgress)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

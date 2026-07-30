@@ -27,6 +27,7 @@ dist/
 .env
 .env.*
 auth.json
+*-auth.json
 accounts.json
 *.cer
 *.key

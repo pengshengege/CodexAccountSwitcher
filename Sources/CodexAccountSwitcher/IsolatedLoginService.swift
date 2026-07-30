@@ -512,7 +512,7 @@ final class IsolatedLoginService {
                     "clientInfo": [
                         "name": "codex-account-switcher",
                         "title": "Codex Account Switcher",
-                        "version": "0.2.3"
+                        "version": "0.3.0"
                     ],
                     "capabilities": [
                         "experimentalApi": true,

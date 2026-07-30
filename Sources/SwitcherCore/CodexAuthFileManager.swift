@@ -42,10 +42,9 @@ public final class CodexAuthFileManager {
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
-            try data.write(to: authURL, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: authURL.path
+            try SessionFileTransfer.writePrivateData(
+                data,
+                to: authURL
             )
         } catch {
             throw SwitcherError.fileOperation(error.localizedDescription)

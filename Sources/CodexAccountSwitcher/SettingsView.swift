@@ -28,6 +28,42 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    SettingsCard(title: "Session 迁移", icon: "arrow.left.arrow.right.square.fill") {
+                        Text("换电脑时，先在账号卡片点击导出按钮保存原始 auth.json；再在新电脑导入，即可直接加入并切换账号。")
+                            .font(.subheadline)
+
+                        HStack {
+                            Button {
+                                manager.importSessionFile()
+                            } label: {
+                                Label("导入 Session 文件", systemImage: "square.and.arrow.down")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(manager.isAccountOperationInProgress)
+
+                            if let activeProfile = manager.activeProfile {
+                                Button {
+                                    manager.exportSession(activeProfile.id)
+                                } label: {
+                                    Label("导出当前账号", systemImage: "square.and.arrow.up")
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(manager.isAccountOperationInProgress)
+                            }
+                        }
+
+                        Label(
+                            "导出文件未加密并包含可直接登录的令牌，等同于密码；不要分享或上传到公开仓库。",
+                            systemImage: "exclamationmark.triangle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Color.orange)
+
+                        Text("只要 Session 仍有效，新电脑通常不需要重新登录；若令牌已过期、被撤销或旧电脑主动退出登录，仍需重新授权。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     SettingsCard(title: "菜单栏与额度提醒", icon: "bell.badge.fill") {
                         Toggle(
                             "启用额度提醒与定时检测",
@@ -104,7 +140,7 @@ struct SettingsView: View {
                         Label("后台检测完全不访问旧版钥匙串", systemImage: "rectangle.badge.xmark")
                         Label("账号列表只保存名称、邮箱和额度摘要", systemImage: "list.bullet.rectangle")
                         Label("状态检测通过本机 Codex app-server 完成", systemImage: "checkmark.seal.fill")
-                        Text("旧版本保存在钥匙串的账号，只会在你主动切换时读取一次并迁移；完成后检测和切换都不再访问钥匙串。本工具不会读取浏览器 Cookie，也不会把登录档上传到第三方服务器。")
+                        Text("旧版本保存在钥匙串的账号，只会在你主动切换或导出时读取一次并迁移；完成后检测和切换都不再访问钥匙串。本工具不会读取浏览器 Cookie，也不会把登录档上传到第三方服务器。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -126,7 +162,7 @@ struct SettingsView: View {
                         HStack {
                             Text("Codex Account Switcher")
                             Spacer()
-                            Text("v0.2.3")
+                            Text("v0.3.0")
                                 .foregroundStyle(.secondary)
                         }
                         Text("这是一个本地账号档案工具，不隶属于 OpenAI。额度数据以 Codex 客户端实际返回为准。")
